@@ -73,7 +73,7 @@ jobs:
             echo "### 上游无变化，跳过" >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: 部署到 Cloudflare Pages
+      - name: 部署 → 冒烟 → 失败自动回滚
         if: steps.check.outputs.needed == 'true'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -85,8 +85,18 @@ jobs:
           fi
           mkdir -p dist && cp upstream/_worker.js dist/_worker.js
           npm install -g wrangler@latest --silent
-          # 项目级设置（env u/jk/qj、KV 绑定 C、兼容日期）已在 Cloudflare 侧配置，会自动继承
+          # 记录部署前的生产版本 ID（用于失败回滚）
+          OLD_DEPLOY=$(curl -sS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"             "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/cfcore/deployments?per_page=1"             | python3 -c "import json,sys;print(json.load(sys.stdin)['result'][0]['id'])")
+          echo "- 部署前版本: $OLD_DEPLOY" >> "$GITHUB_STEP_SUMMARY"
           wrangler pages deploy dist --project-name=cfcore --branch=main --commit-dirty=true
+          sleep 20
+          CODE=$(curl -sS -o /dev/null -w "%{http_code}" "https://cfcore-6ha.pages.dev" || echo "000")
+          echo "- 冒烟测试 HTTP $CODE" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$CODE" != "200" ]; then
+            echo "::error::冒烟测试失败(HTTP $CODE)，自动回滚到部署前版本"
+            curl -sS -X POST -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"               "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/cfcore/deployments/$OLD_DEPLOY/rollback"
+            exit 1
+          fi
 
       - name: 记录已部署 hash
         if: steps.check.outputs.needed == 'true'
@@ -98,14 +108,3 @@ jobs:
           git commit -m "chore: cfcore auto-update ${{ steps.rel.outputs.ver }}" || true
           git push || echo "::warning::hash 记录提交失败（不影响已部署站点）"
 
-      - name: 部署后冒烟测试
-        if: steps.check.outputs.needed == 'true'
-        run: |
-          echo "### 部署后验证" >> "$GITHUB_STEP_SUMMARY"
-          sleep 20
-          CODE=$(curl -sS -o /dev/null -w "%{http_code}" "https://cfcore-6ha.pages.dev" || echo "000")
-          echo "- 主地址 HTTP $CODE" >> "$GITHUB_STEP_SUMMARY"
-          if [ "$CODE" != "200" ]; then
-            echo "::error::主地址返回 $CODE，部署可能损坏线上服务"
-            exit 1
-          fi
