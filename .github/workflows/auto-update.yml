@@ -78,6 +78,7 @@ jobs:
         run: npm install -g wrangler@4 --silent
 
       - name: 记录部署前版本（用于失败回滚）
+        id: old_deploy
         if: steps.check.outputs.needed == 'true'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -133,7 +134,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           BLOCKED: ${{ steps.deploy.outputs.blocked }}
-          OLD_DEPLOY: ${{ steps.deploy_step_old.outputs.old_deploy }}
+          OLD_DEPLOY: ${{ steps.old_deploy.outputs.old_deploy }}
         run: |
           sleep 20
           PROJECT=$(cat project-name.txt)
