@@ -98,6 +98,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
+          mkdir -p dist && cp upstream/_worker.js dist/_worker.js
           PROJECT=$(cat project-name.txt)
           echo "project=$PROJECT" >> "$GITHUB_OUTPUT"
           echo "- 部署目标: $PROJECT" >> "$GITHUB_STEP_SUMMARY"
