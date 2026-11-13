@@ -1,8 +1,9 @@
 name: cfcore Auto Update
 
 # cfcore (byJoey/cfnew 精简内核) 云端自动更新
-# 上游: byJoey/cfnew releases | 部署目标: Cloudflare Pages 项目 cfcore
-# 需要 Secrets: CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID
+# 上游: byJoey/cfnew releases | 部署目标: project-name.txt 中记录的 Pages 项目
+# 特性: 冒烟失败自动回滚 | 项目被封(8000119)自动转生到新项目并无缝切换域名
+# 需要 Secrets: CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID (+ LINE_*_UUID 供 monitor.yml)
 
 on:
   schedule:
@@ -61,7 +62,6 @@ jobs:
           OLD=$(cat deployed-hash.txt 2>/dev/null | tr -d '\n\r' || echo none)
           [ -z "$OLD" ] && OLD="none"
           echo "new=$NEW" >> "$GITHUB_OUTPUT"
-          echo "old=$OLD" >> "$GITHUB_OUTPUT"
           echo "- 上游 hash: \`${NEW:0:16}…\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- 已部署 hash: \`${OLD:0:16}…\`" >> "$GITHUB_STEP_SUMMARY"
           FORCE="${{ github.event.inputs.force }}"
@@ -73,28 +73,81 @@ jobs:
             echo "### 上游无变化，跳过" >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: 部署 → 冒烟 → 失败自动回滚
+      - name: 安装 wrangler（固定 v4 主版本，避免上游破坏性更新）
+        if: steps.check.outputs.needed == 'true'
+        run: npm install -g wrangler@4 --silent
+
+      - name: 记录部署前版本（用于失败回滚）
         if: steps.check.outputs.needed == 'true'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
-            echo "::error::未配置 Secrets：CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID"
-            exit 1
+          PROJECT=$(cat project-name.txt)
+          OLD_DEPLOY=$(curl -sS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT/deployments?per_page=1" \
+            | python3 -c "import json,sys;print(json.load(sys.stdin)['result'][0]['id'])" 2>/dev/null || echo "")
+          echo "old_deploy=$OLD_DEPLOY" >> "$GITHUB_OUTPUT"
+          echo "- 部署前版本 ID: ${OLD_DEPLOY:-无}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 部署到 Cloudflare Pages
+        id: deploy
+        if: steps.check.outputs.needed == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          PROJECT=$(cat project-name.txt)
+          echo "project=$PROJECT" >> "$GITHUB_OUTPUT"
+          echo "- 部署目标: $PROJECT" >> "$GITHUB_STEP_SUMMARY"
+          set +e
+          OUT=$(wrangler pages deploy dist --project-name="$PROJECT" --branch=main --commit-dirty=true 2>&1)
+          RC=$?
+          set -e
+          echo "$OUT"
+          if [ $RC -ne 0 ]; then
+            if echo "$OUT" | grep -q "8000119"; then
+              echo "blocked=true" >> "$GITHUB_OUTPUT"
+              echo "::warning::项目 $PROJECT 已被 CF 封禁(8000119)，启动转生流程"
+            else
+              echo "::error::$OUT"
+              exit 1
+            fi
+          else
+            echo "blocked=false" >> "$GITHUB_OUTPUT"
           fi
-          mkdir -p dist && cp upstream/_worker.js dist/_worker.js
-          npm install -g wrangler@latest --silent
-          # 记录部署前的生产版本 ID（用于失败回滚）
-          OLD_DEPLOY=$(curl -sS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"             "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/cfcore/deployments?per_page=1"             | python3 -c "import json,sys;print(json.load(sys.stdin)['result'][0]['id'])")
-          echo "- 部署前版本: $OLD_DEPLOY" >> "$GITHUB_STEP_SUMMARY"
-          wrangler pages deploy dist --project-name=cfcore --branch=main --commit-dirty=true
+
+      - name: 封禁转生（自动迁移到新项目）
+        id: rescue
+        if: steps.deploy.outputs.blocked == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          OLD_PROJECT: ${{ steps.deploy.outputs.project }}
+          DIST_DIR: dist
+        run: bash scripts/rescue.sh
+
+      - name: 冒烟测试（失败自动回滚）
+        if: steps.check.outputs.needed == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          BLOCKED: ${{ steps.deploy.outputs.blocked }}
+          OLD_DEPLOY: ${{ steps.deploy_step_old.outputs.old_deploy }}
+        run: |
           sleep 20
-          CODE=$(curl -sS -o /dev/null -w "%{http_code}" "https://cfcore-6ha.pages.dev" || echo "000")
-          echo "- 冒烟测试 HTTP $CODE" >> "$GITHUB_STEP_SUMMARY"
+          PROJECT=$(cat project-name.txt)
+          SUB=$(curl -sS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT" \
+            | python3 -c "import json,sys;print(json.load(sys.stdin)['result']['subdomain'])")
+          CODE=$(curl -sS -o /dev/null -w "%{http_code}" "https://$SUB" || echo "000")
+          echo "- 冒烟测试 https://$SUB → HTTP $CODE" >> "$GITHUB_STEP_SUMMARY"
           if [ "$CODE" != "200" ]; then
-            echo "::error::冒烟测试失败(HTTP $CODE)，自动回滚到部署前版本"
-            curl -sS -X POST -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"               "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/cfcore/deployments/$OLD_DEPLOY/rollback"
+            if [ "$BLOCKED" != "true" ] && [ -n "${{ steps.old_deploy.outputs.old_deploy }}" ]; then
+              echo "::error::冒烟失败(HTTP $CODE)，自动回滚到部署前版本"
+              curl -sS -X POST -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+                "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT/deployments/${{ steps.old_deploy.outputs.old_deploy }}/rollback"
+            fi
             exit 1
           fi
 
@@ -107,4 +160,3 @@ jobs:
           git add deployed-hash.txt
           git commit -m "chore: cfcore auto-update ${{ steps.rel.outputs.ver }}" || true
           git push || echo "::warning::hash 记录提交失败（不影响已部署站点）"
-
