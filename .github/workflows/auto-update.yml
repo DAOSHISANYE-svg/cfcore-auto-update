@@ -1,0 +1,111 @@
+name: cfcore Auto Update
+
+# cfcore (byJoey/cfnew 精简内核) 云端自动更新
+# 上游: byJoey/cfnew releases | 部署目标: Cloudflare Pages 项目 cfcore
+# 需要 Secrets: CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID
+
+on:
+  schedule:
+    # 每天 06:17 UTC（北京时间 14:17），与 CFnew 04:17 / edgetunnel 05:23 错开
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "强制重新部署（忽略 hash 比对）"
+        required: false
+        default: "false"
+        type: string
+
+permissions:
+  contents: read
+  deployments: write
+
+concurrency:
+  group: cfcore-autoupdate
+  cancel-in-progress: false
+
+jobs:
+  update:
+    name: Check & Deploy cfcore
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 查询上游最新版本
+        id: rel
+        run: |
+          VER=$(curl -sS https://api.github.com/repos/byJoey/cfnew/releases/latest | python3 -c "import json,sys;print(json.load(sys.stdin)['tag_name'])")
+          echo "ver=$VER" >> "$GITHUB_OUTPUT"
+          echo "### 上游最新版本: $VER" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 下载新版 _worker.js
+        run: |
+          mkdir -p upstream
+          curl -sSL --retry 5 -H "Accept: application/vnd.github.raw" \
+            -o upstream/_worker.js \
+            "https://api.github.com/repos/byJoey/cfnew/contents/_worker.js?ref=${{ steps.rel.outputs.ver }}"
+          test -s upstream/_worker.js || { echo "::error::下载的 _worker.js 为空"; exit 1; }
+          SIZE=$(wc -c < upstream/_worker.js)
+          echo "- 内核大小: ${SIZE} 字节" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$SIZE" -lt 20000 ]; then
+            echo "::error::文件仅 ${SIZE} 字节，明显异常（正常约 37KB）"
+            exit 1
+          fi
+
+      - name: 计算 hash 并比对
+        id: check
+        run: |
+          NEW=$(sha256sum upstream/_worker.js | cut -d' ' -f1)
+          OLD=$(cat deployed-hash.txt 2>/dev/null | tr -d '\n\r' || echo none)
+          [ -z "$OLD" ] && OLD="none"
+          echo "new=$NEW" >> "$GITHUB_OUTPUT"
+          echo "old=$OLD" >> "$GITHUB_OUTPUT"
+          echo "- 上游 hash: \`${NEW:0:16}…\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- 已部署 hash: \`${OLD:0:16}…\`" >> "$GITHUB_STEP_SUMMARY"
+          FORCE="${{ github.event.inputs.force }}"
+          if [ "$FORCE" = "true" ] || [ "$NEW" != "$OLD" ]; then
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+            echo "### 需要更新" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+            echo "### 上游无变化，跳过" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: 部署到 Cloudflare Pages
+        if: steps.check.outputs.needed == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error::未配置 Secrets：CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID"
+            exit 1
+          fi
+          mkdir -p dist && cp upstream/_worker.js dist/_worker.js
+          npm install -g wrangler@latest --silent
+          # 项目级设置（env u/jk/qj、KV 绑定 C、兼容日期）已在 Cloudflare 侧配置，会自动继承
+          wrangler pages deploy dist --project-name=cfcore --branch=main --commit-dirty=true
+
+      - name: 记录已部署 hash
+        if: steps.check.outputs.needed == 'true'
+        run: |
+          echo "${{ steps.check.outputs.new }}" > deployed-hash.txt
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add deployed-hash.txt
+          git commit -m "chore: cfcore auto-update ${{ steps.rel.outputs.ver }}" || true
+          git push || echo "::warning::hash 记录提交失败（不影响已部署站点）"
+
+      - name: 部署后冒烟测试
+        if: steps.check.outputs.needed == 'true'
+        run: |
+          echo "### 部署后验证" >> "$GITHUB_STEP_SUMMARY"
+          sleep 20
+          CODE=$(curl -sS -o /dev/null -w "%{http_code}" "https://cfcore-6ha.pages.dev" || echo "000")
+          echo "- 主地址 HTTP $CODE" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$CODE" != "200" ]; then
+            echo "::error::主地址返回 $CODE，部署可能损坏线上服务"
+            exit 1
+          fi
