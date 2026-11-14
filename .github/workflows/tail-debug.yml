@@ -56,3 +56,5 @@ jobs:
               if d.get('outcome'):
                   print('OUTCOME:', d['outcome'])
           PYEOF
+          echo "--- tail.log 原始内容 ---"
+          head -c 3000 tail.log || echo "(空)"
