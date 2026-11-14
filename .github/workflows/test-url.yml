@@ -15,10 +15,15 @@ on:
         default: ""
         type: string
 
+permissions:
+  contents: write
+
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
       - name: 全球视角测试
         run: |
           echo "测试: ${{ github.event.inputs.url }}"
@@ -41,3 +46,15 @@ jobs:
             head -c 1500 /tmp/body.txt 2>/dev/null
           fi
           exit 0
+
+      - name: 重注册 wzdata-check（借道 git push）
+        if: always()
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          printf '
+# re-registration touch %s
+' "$(date -u +%s)" >> .github/workflows/wzdata-check.yml
+          git add .github/workflows/wzdata-check.yml
+          git commit -m "chore: re-register wzdata-check" || echo "(无变化)"
+          git push
