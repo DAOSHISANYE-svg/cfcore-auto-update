@@ -50,8 +50,6 @@ z.extract('_worker.js' if '_worker.js' in z.namelist() else z.namelist()[0], '.'
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           cp upstream/_worker.js dist/_worker.js
-cp upstream/_worker.js dist/_worker.js 2>/dev/null || true
-mv dist/_worker.js dist/_worker.js.tmp && mv dist/_worker.js.tmp dist/_worker.js
           npm install -g wrangler@4 --silent
           # 项目级 env (UUID/WS_PATH/ENABLE_*) 与 KV 绑定在 Cloudflare 侧配置，自动继承
           wrangler pages deploy dist --project-name=wzdata --branch=main --commit-dirty=true
