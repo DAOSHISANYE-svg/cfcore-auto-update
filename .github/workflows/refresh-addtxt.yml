@@ -18,11 +18,12 @@ jobs:
     steps:
       - name: 拉取优选数据源
         run: |
-          curl -sSL --max-time 30 "https://ip.164746.xyz/ipTop10.html" -o src1.txt || echo "" > src1.txt
+          curl -sSL --max-time 30 "curl -sSL --max-time 30 -H "Accept: application/vnd.github.raw" \n            -o src0.txt "https://api.github.com/repos/K775KK/cfopt/contents/result.txt" || echo "" > src0.txt
+https://ip.164746.xyz/ipTop10.html" -o src1.txt || echo "" > src1.txt
           curl -sSL --max-time 30 -H "Accept: application/vnd.github.raw" \
             -o src2.txt "https://api.github.com/repos/ymyuuu/IPDB/contents/BestCF/bestcfv4.txt" || echo "" > src2.txt
           # 合并去重（纯 IP）
-          cat src1.txt src2.txt | tr ',' '\n' | tr -d '\r' | sed 's/#.*//' | awk '{$1=$1};1' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | awk '!seen[$0]++' > ips.txt
+          cat src0.txt src1.txt src2.txt | tr ',' '\n' | tr -d '\r' | sed 's/#.*//' | awk '{$1=$1};1' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | awk '!seen[$0]++' > ips.txt
           COUNT=$(wc -l < ips.txt)
           echo "- 获取去重后优选 IP: ${COUNT} 个" >> "$GITHUB_STEP_SUMMARY"
           [ "$COUNT" -ge 5 ] || { echo "::error::优选源数据不足（仅 ${COUNT} 个）"; exit 1; }
