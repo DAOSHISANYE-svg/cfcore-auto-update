@@ -1,0 +1,31 @@
+name: Test URL
+
+# 全球视角单 URL 测试工具（手动触发，输入任意 URL）
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "要测试的 URL"
+        required: true
+        type: string
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 全球视角测试
+        run: |
+          echo "测试: ${{ github.event.inputs.url }}"
+          for i in 1 2 3; do
+            CODE=$(curl -sS -o /tmp/body.txt -w "%{http_code}" --max-time 25 "${{ github.event.inputs.url }}" 2>/dev/null || echo "000")
+            echo "尝试 $i: HTTP $CODE"
+            [ "$CODE" != "000" ] && break
+            sleep 3
+          done
+          echo "### 结果: HTTP $CODE" >> "$GITHUB_STEP_SUMMARY"
+          echo "--- 响应头 ---"
+          curl -sSI --max-time 25 "${{ github.event.inputs.url }}" 2>/dev/null | head -8
+          echo "--- 响应体前 200 字 ---"
+          head -c 200 /tmp/body.txt 2>/dev/null
+          exit 0
