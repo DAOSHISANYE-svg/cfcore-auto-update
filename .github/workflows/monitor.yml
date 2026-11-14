@@ -39,6 +39,7 @@ jobs:
           check "C·cfcore (cf.55555544.xyz)" "https://cf.55555544.xyz"
           check "D·CFPilot面板 (panel.55555544.xyz)" "https://panel.55555544.xyz/p8264"
           check "D·CFPilot数据 (data.55555544.xyz)" "https://data.55555544.xyz"
+          check "E·cfapex (cfapex.55555544.xyz)" "https://cfapex.55555544.xyz"
           # A线 VLESS-WS 端点握手（101 = 存活）
           HSK=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 20 \
             -H "Connection: Upgrade" -H "Upgrade: websocket" \
