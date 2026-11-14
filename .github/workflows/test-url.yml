@@ -9,6 +9,11 @@ on:
         description: "要测试的 URL"
         required: true
         type: string
+      grep_pattern:
+        description: "在响应体中 grep 的模式（可选）"
+        required: false
+        default: ""
+        type: string
 
 jobs:
   test:
@@ -28,4 +33,11 @@ jobs:
           curl -sSI --max-time 25 "${{ github.event.inputs.url }}" 2>/dev/null | head -8
           echo "--- 响应体前 200 字 ---"
           head -c 200 /tmp/body.txt 2>/dev/null
+          GP="${{ github.event.inputs.grep_pattern }}"
+          if [ -n "$GP" ]; then
+            echo "--- grep 匹配（$GP）---"
+            grep -oE "$GP" /tmp/body.txt 2>/dev/null | head -20 || echo "(无匹配)"
+            echo "--- body 前 1500 字 ---"
+            head -c 1500 /tmp/body.txt 2>/dev/null
+          fi
           exit 0
