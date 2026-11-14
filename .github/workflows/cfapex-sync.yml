@@ -62,6 +62,20 @@ jobs:
           echo "- 冒烟 HTTP $CODE" >> "$GITHUB_STEP_SUMMARY"
           [ "$CODE" = "200" ] || { echo "::error::冒烟失败 HTTP $CODE"; exit 1; }
 
+      - name: 优选生效校验（部署后）
+        if: steps.check.outputs.needed == 'true'
+        env:
+          SUB_TOKEN_E: ${{ secrets.SUB_TOKEN_E }}
+        run: |
+          sleep 10
+          N=$(curl -sS --max-time 25 "https://cfapex-2bl.pages.dev/s/$SUB_TOKEN_E" | grep -c 'vless://' || echo 0)
+          if [ "${N:-0}" -ge 10 ] && [ "${N:-0}" -le 100 ]; then
+            echo "- ✅ 优选池生效: ${N} 条（cfopt 实测池）" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- ⚠️ 订阅条数 ${N:-0}（cfopt 池应约 24 条；若为 234 则回退内置池）" >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::优选池校验异常，请人工检查节点速度"
+          fi
+
       - name: 记录 hash
         if: steps.check.outputs.needed == 'true'
         run: |
