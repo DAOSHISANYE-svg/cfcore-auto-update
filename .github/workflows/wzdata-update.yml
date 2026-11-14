@@ -53,13 +53,6 @@ jobs:
           # 项目级 env (UUID/WS_PATH/ENABLE_*) 与 KV 绑定在 Cloudflare 侧配置，自动继承
           wrangler pages deploy dist --project-name=wzdata --branch=main --commit-dirty=true
 
-      - name: 同步部署备份线 warpzhuanyong
-        if: steps.check.outputs.needed == 'true'
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          wrangler pages deploy dist --project-name=warpzhuanyong --branch=main --commit-dirty=true
 
       - name: 冒烟测试
         if: steps.check.outputs.needed == 'true'
