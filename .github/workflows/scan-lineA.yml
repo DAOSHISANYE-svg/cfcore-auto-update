@@ -1,0 +1,29 @@
+name: Scan Line A
+
+on:
+  schedule:
+    - cron: "53 7 * * 1"
+  workflow_dispatch:
+    inputs: {}
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: 真连接优选
+    runs-on: ubuntu-latest
+    steps:
+      - name: 安装 cfpilot 并扫描回填
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          PANEL_PASSWORD: ${{ secrets.WZPANEL_PASSWORD }}
+        run: |
+          npm install -g cfpilot --silent
+          cfpilot scan --host "55555544.xyz" --panel "https://wzpanel.pages.dev/admin927" --panel-password "$PANEL_PASSWORD" --token "$CLOUDFLARE_API_TOKEN"
+      - name: 冒烟测试
+        run: |
+          sleep 15
+          CODE=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 25 "https://55555544.xyz" || echo "000")
+          echo "- 线路A冒烟 HTTP $CODE" >> "$GITHUB_STEP_SUMMARY"
+          [ "$CODE" = "200" ] || { echo "::error::线路A冒烟失败"; exit 1; }
