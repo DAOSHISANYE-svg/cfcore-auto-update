@@ -1,6 +1,6 @@
 name: Analyze URL
 
-# 抓取任意文本内容并按模式分析（手动触发）
+# 抓取任意文本内容并按模式分析，结果提交回仓库 result/ 目录
 
 on:
   workflow_dispatch:
@@ -14,25 +14,33 @@ on:
         required: true
         type: string
 
+permissions:
+  contents: write
+
 jobs:
   analyze:
     runs-on: ubuntu-latest
     steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
       - name: 抓取并分析
+        env:
+          URL: ${{ github.event.inputs.url }}
+          PAT: ${{ github.event.inputs.pattern }}
         run: |
-          curl -sSL --retry 5 --max-time 120 -H "Accept: application/vnd.github.raw" \
-            -o /tmp/content.txt "${{ github.event.inputs.url }}"
+          curl -sSL --retry 5 --max-time 120 -H "Accept: application/vnd.github.raw" -o /tmp/content.txt "$URL"
           SIZE=$(wc -c < /tmp/content.txt)
-          echo "### 内容大小: $SIZE 字节" >> "$GITHUB_STEP_SUMMARY"
-          echo "### 匹配行（含上下文）:" >> "$GITHUB_STEP_SUMMARY"
-          grep -nE -C1 "${{ github.event.inputs.pattern }}" /tmp/content.txt > /tmp/matches.txt 2>/dev/null || echo "(无匹配)" >> "$GITHUB_STEP_SUMMARY"
-          wc -l < /tmp/matches.txt
-          # 分段输出（摘要上限 1024KB）
-          split -l 400 /tmp/matches.txt chunk_
-          for f in chunk_*; do
-            {
-              echo '```'
-              head -c 40000 "$f"
-              echo '```'
-            } >> "$GITHUB_STEP_SUMMARY"
-          done
+          echo "内容大小: $SIZE 字节"
+          grep -nE -C1 "$PAT" /tmp/content.txt > /tmp/matches.txt 2>/dev/null || echo "(无匹配)" > /tmp/matches.txt
+          mkdir -p result
+          cp /tmp/content.txt result/content.txt
+          cp /tmp/matches.txt result/matches.txt
+
+      - name: 提交结果
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add result/
+          git commit -m "analysis result $(date -u +%Y%m%d%H%M)" || echo "(无变化)"
+          git push
