@@ -1,0 +1,55 @@
+name: Deploy wzpanel
+
+# 线路A控制面（管理面板）部署：CFPilot control plane 承载
+# 面板密码走 Secret WZPANEL_PASSWORD；与 wzdata 数据面配对（同 UUID/WS_PATH/共享 KV）
+
+on:
+  workflow_dispatch:
+    inputs: {}
+
+permissions:
+  contents: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 下载控制面并部署
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npm install -g wrangler@4 --silent
+          curl -sSL --retry 5 -H "Accept: application/vnd.github.raw" \
+            -o control.zip "https://api.github.com/repos/xmwengxing/CFPilot/contents/CFPilot-control.zip"
+          python3 -c "import zipfile; z = zipfile.ZipFile('control.zip'); print('zip 内容:', z.namelist()); z.extractall('dist')"
+          ls -la dist/
+          wrangler pages project create wzpanel --production-branch=main 2>/dev/null || echo "(项目已存在)"
+          wrangler pages deploy dist --project-name=wzpanel --branch=main --commit-dirty=true
+
+      - name: 配置环境变量与绑定
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PANEL_PASSWORD: ${{ secrets.WZPANEL_PASSWORD }}
+        run: |
+          python3 -c "import json,os; d = json.load(open('scripts/wzpanel-cfg.json', encoding='utf-8')); d['env_vars']['PANEL_PASSWORD']['value'] = os.environ['PANEL_PASSWORD']; json.dump(d, open('/tmp/wzpanel_cfg.json', 'w', encoding='utf-8'))"
+          python3 scripts/configure-pages.py wzpanel /tmp/wzpanel_cfg.json
+
+      - name: 重新部署使配置生效
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          wrangler pages deploy dist --project-name=wzpanel --branch=main --commit-dirty=true
+
+      - name: 冒烟测试
+        run: |
+          sleep 20
+          CODE=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 25 "https://wzpanel.pages.dev/admin927" || echo "000")
+          echo "- 面板 https://wzpanel.pages.dev/admin927 → HTTP $CODE" >> "$GITHUB_STEP_SUMMARY"
+          [ "$CODE" = "200" ] || { echo "::error::面板冒烟失败 HTTP $CODE"; exit 1; }
+          echo "### ✅ 线路A管理面板上线（密码在 Secrets WZPANEL_PASSWORD 中）" >> "$GITHUB_STEP_SUMMARY"
