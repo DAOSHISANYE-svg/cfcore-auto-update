@@ -1,7 +1,7 @@
 name: Refresh ADD.txt
 
 # 线路 A (warpzhuanyong) 优选 IP 库自动刷新
-# 数据源: ip.164746.xyz + ymyuuu/IPDB → 写入 KV ADD.txt (每周一刷新)
+# 数据源: K775KK/cfopt(三网实测) + ip.164746.xyz + ymyuuu/IPDB → 写入 KV ADD.txt (每周一刷新)
 
 on:
   schedule:
@@ -18,15 +18,20 @@ jobs:
     steps:
       - name: 拉取优选数据源
         run: |
-          curl -sSL --max-time 30 "curl -sSL --max-time 30 -H "Accept: application/vnd.github.raw" \n            -o src0.txt "https://api.github.com/repos/K775KK/cfopt/contents/result.txt" || echo "" > src0.txt
-https://ip.164746.xyz/ipTop10.html" -o src1.txt || echo "" > src1.txt
-          curl -sSL --max-time 30 -H "Accept: application/vnd.github.raw" \
-            -o src2.txt "https://api.github.com/repos/ymyuuu/IPDB/contents/BestCF/bestcfv4.txt" || echo "" > src2.txt
-          # 合并去重（纯 IP）
+          # 源1: K775KK/cfopt 三网探针实测延迟（IP:端口#备注）
+          curl -sSL --max-time 30 -H "Accept: application/vnd.github.raw" -o src0.txt "https://api.github.com/repos/K775KK/cfopt/contents/result.txt" || echo "" > src0.txt
+          # 源2: ip.164746.xyz Top10
+          curl -sSL --max-time 30 "https://ip.164746.xyz/ipTop10.html" -o src1.txt || echo "" > src1.txt
+          # 源3: ymyuuu/IPDB
+          curl -sSL --max-time 30 -H "Accept: application/vnd.github.raw" -o src2.txt "https://api.github.com/repos/ymyuuu/IPDB/contents/BestCF/bestcfv4.txt" || echo "" > src2.txt
+          # 合并去重（提取纯 IP）
           cat src0.txt src1.txt src2.txt | tr ',' '\n' | tr -d '\r' | sed 's/#.*//' | awk '{$1=$1};1' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | awk '!seen[$0]++' > ips.txt
           COUNT=$(wc -l < ips.txt)
           echo "- 获取去重后优选 IP: ${COUNT} 个" >> "$GITHUB_STEP_SUMMARY"
-          [ "$COUNT" -ge 5 ] || { echo "::error::优选源数据不足（仅 ${COUNT} 个）"; exit 1; }
+          if [ "$COUNT" -lt 5 ]; then
+            echo "::error::优选源数据不足（仅 ${COUNT} 个）"
+            exit 1
+          fi
 
       - name: 生成并写入 KV ADD.txt
         env:
@@ -50,7 +55,11 @@ https://ip.164746.xyz/ipTop10.html" -o src1.txt || echo "" > src1.txt
             --data-binary "@addtxt.txt" \
             "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/storage/kv/namespaces/$NS/values/ADD.txt")
           echo "- KV 写入 HTTP $HTTP" >> "$GITHUB_STEP_SUMMARY"
-          [ "$HTTP" = "200" ] || { echo "::error::KV 写入失败"; cat put_resp.json; exit 1; }
+          if [ "$HTTP" != "200" ]; then
+            echo "::error::KV 写入失败"
+            cat put_resp.json
+            exit 1
+          fi
 
       - name: 回读验证
         env:
@@ -62,5 +71,8 @@ https://ip.164746.xyz/ipTop10.html" -o src1.txt || echo "" > src1.txt
             "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/storage/kv/namespaces/$NS/values/ADD.txt")
           LINES=$(echo "$VERIFY" | grep -c 'CF官方优选')
           echo "- 回读验证: ${LINES} 条优选条目" >> "$GITHUB_STEP_SUMMARY"
-          [ "$LINES" -ge 5 ] || { echo "::error::回读验证失败"; exit 1; }
+          if [ "$LINES" -lt 5 ]; then
+            echo "::error::回读验证失败"
+            exit 1
+          fi
           echo "### ✅ 线路A优选库已刷新" >> "$GITHUB_STEP_SUMMARY"
