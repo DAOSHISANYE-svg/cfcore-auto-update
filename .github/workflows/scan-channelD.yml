@@ -1,0 +1,29 @@
+name: Scan Channel D
+
+on:
+  schedule:
+    - cron: "23 8 * * 1"
+  workflow_dispatch:
+    inputs: {}
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: 真连接优选
+    runs-on: ubuntu-latest
+    steps:
+      - name: 安装 cfpilot 并扫描回填
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          PANEL_PASSWORD: ${{ secrets.PANEL_PASSWORD_D }}
+        run: |
+          npm install -g cfpilot --silent
+          cfpilot scan --host "data.55555544.xyz" --panel "https://cfpilot-panel-71u.pages.dev/p8264" --panel-password "$PANEL_PASSWORD" --token "$CLOUDFLARE_API_TOKEN"
+      - name: 冒烟测试
+        run: |
+          sleep 15
+          CODE=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 25 "https://data.55555544.xyz" || echo "000")
+          echo "- 渠道D冒烟 HTTP $CODE" >> "$GITHUB_STEP_SUMMARY"
+          [ "$CODE" = "200" ] || { echo "::error::渠道D冒烟失败"; exit 1; }
