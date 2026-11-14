@@ -1,0 +1,58 @@
+name: Tail Debug
+
+# 在 Actions 内运行 wrangler tail 抓取 Worker 实时异常（绕过本地网络限制）
+
+on:
+  workflow_dispatch:
+    inputs:
+      worker:
+        description: "Worker 名称"
+        required: true
+        type: string
+      url:
+        description: "触发请求的 URL"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  tail:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 安装 wrangler 并抓取异常
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npm install -g wrangler@4 --silent
+          npx wrangler tail "${{ github.event.inputs.worker }}" --format json > tail.log 2>&1 &
+          TAIL_PID=$!
+          sleep 20
+          for p in "/" "/panel" "/favicon.ico"; do
+            curl -sS -o /dev/null --max-time 20 "${{ github.event.inputs.url }}$p" 2>/dev/null || true
+            sleep 3
+          done
+          sleep 10
+          kill $TAIL_PID 2>/dev/null || true
+          echo "## Tail 输出" >> "$GITHUB_STEP_SUMMARY"
+          python3 - << 'PYEOF'
+          import json
+          for line in open('tail.log', encoding='utf-8', errors='replace'):
+              line = line.strip()
+              if not line.startswith('{'):
+                  continue
+              try:
+                  d = json.loads(line)
+              except Exception:
+                  continue
+              for e in d.get('exceptions', []):
+                  print('EXCEPTION:', e.get('message', '')[:500])
+              for lg in d.get('logs', []):
+                  msg = lg.get('message')
+                  msg = msg if isinstance(msg, str) else json.dumps(msg, ensure_ascii=False)
+                  print('LOG:', str(msg)[:400])
+              if d.get('outcome'):
+                  print('OUTCOME:', d['outcome'])
+          PYEOF
