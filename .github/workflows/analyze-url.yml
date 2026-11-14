@@ -44,3 +44,14 @@ jobs:
           git add result/
           git commit -m "analysis result $(date -u +%Y%m%d%H%M)" || echo "(无变化)"
           git push
+
+      - name: 重注册 wzdata-check（借道 git push）
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          printf '
+# re-registration touch %s
+' "$(date -u +%s)" >> .github/workflows/wzdata-check.yml
+          git add .github/workflows/wzdata-check.yml
+          git commit -m "chore: re-register wzdata-check" || echo "(无变化)"
+          git push
