@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 name: wzdata Update
 
 # 线路A数据面 (wzdata, CFPilot dataplane 承载 55555544.xyz) 自动更新
@@ -80,3 +81,87 @@ jobs:
           git add deployed-hash-wzdata.txt
           git commit -m "chore: wzdata auto-update" || true
           git push || echo "::warning::hash 提交失败"
+=======
+name: wzdata Update
+
+# 线路A数据面 (wzdata, CFPilot dataplane 承载 55555544.xyz) 自动更新
+# 数据源: CFPilot-dataplane.zip 内容 hash；同步部署同名备份线 warpzhuanyong
+
+on:
+  schedule:
+    - cron: "3 10 * * *"   # 每日 10:03 UTC（北京时间 18:03）
+  workflow_dispatch:
+    inputs: {}
+
+permissions:
+  contents: read
+
+jobs:
+  update:
+    name: 更新 wzdata
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 下载上游数据面并比对
+        id: check
+        run: |
+          mkdir -p upstream dist
+          curl -sSL --retry 5 -H "Accept: application/vnd.github.raw" \
+            -o upstream/cfpilot_dp.zip \
+            "https://api.github.com/repos/xmwengxing/CFPilot/contents/CFPilot-dataplane.zip" || true
+          python3 scripts/extract-dataplane.py
+          test -s upstream/_worker.js || { echo "::error::提取失败"; exit 1; }
+          SIZE=$(wc -c < upstream/_worker.js)
+          echo "- 上游数据面大小: ${SIZE} 字节" >> "$GITHUB_STEP_SUMMARY"
+          [ "$SIZE" -gt 50000 ] || { echo "::error::文件仅 ${SIZE} 字节，异常"; exit 1; }
+          NEW=$(sha256sum upstream/_worker.js | cut -d' ' -f1)
+          OLD=$(cat deployed-hash-wzdata.txt 2>/dev/null | tr -d '\n\r' || echo none)
+          echo "new=$NEW" >> "$GITHUB_OUTPUT"
+          echo "- 上游数据面 hash: \`${NEW:0:16}…\`" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$NEW" != "$OLD" ]; then
+            echo "needed=true" >> "$GITHUB_OUTPUT"; echo "### 需要更新" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "needed=false" >> "$GITHUB_OUTPUT"; echo "### 无变化" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: 部署
+        if: steps.check.outputs.needed == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          cp upstream/_worker.js dist/_worker.js
+          npm install -g wrangler@4 --silent
+          # 项目级 env (UUID/WS_PATH/ENABLE_*) 与 KV 绑定在 Cloudflare 侧配置，自动继承
+          wrangler pages deploy dist --project-name=wzdata --branch=main --commit-dirty=true
+
+      - name: 同步部署备份线 warpzhuanyong
+        if: steps.check.outputs.needed == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          wrangler pages deploy dist --project-name=warpzhuanyong --branch=main --commit-dirty=true
+
+      - name: 冒烟测试
+        if: steps.check.outputs.needed == 'true'
+        run: |
+          sleep 20
+          for u in "https://wzdata.pages.dev" "https://warpzhuanyong.pages.dev"; do
+            CODE=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 25 "$u" || echo "000")
+            echo "- $u → HTTP $CODE" >> "$GITHUB_STEP_SUMMARY"
+            [ "$CODE" != "000" ] || { echo "::error::$u 冒烟失败"; exit 1; }
+          done
+
+      - name: 记录 hash
+        if: steps.check.outputs.needed == 'true'
+        run: |
+          echo "${{ steps.check.outputs.new }}" > deployed-hash-wzdata.txt
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add deployed-hash-wzdata.txt
+          git commit -m "chore: wzdata auto-update" || true
+          git push || echo "::warning::hash 提交失败"
+>>>>>>> cc96184 (restore: wzdata-update workflow with backup sync (was accidentally deleted))
