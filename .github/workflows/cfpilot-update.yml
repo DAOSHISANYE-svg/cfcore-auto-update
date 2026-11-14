@@ -1,0 +1,37 @@
+name: CFPilot Update
+
+# CFPilot 双项目（控制面 cfpilot-panel + 数据面 cfpilot-data）自动更新
+# 原理: cfpilot CLI 通过部署清单自动识别同源项目并就地更新
+
+on:
+  schedule:
+    - cron: "53 8 * * *"   # 每日 08:53 UTC（北京时间 16:53）
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  update:
+    name: 更新 CFPilot
+    runs-on: ubuntu-latest
+    steps:
+      - name: 安装 cfpilot 并更新
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npm install -g cfpilot --silent
+          cfpilot deploy --account "$CLOUDFLARE_ACCOUNT_ID" \
+            --control cfpilot-panel --data cfpilot-data --data-plane pages \
+            --panel-path=/p8264 --kv 8d0f758f40cb48718edc0671ac2cd45c \
+            --mode update < /dev/null
+
+      - name: 冒烟测试
+        run: |
+          sleep 15
+          for u in "https://panel.55555544.xyz/p8264" "https://data.55555544.xyz"; do
+            CODE=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 25 "$u" || echo "000")
+            echo "- $u → HTTP $CODE" >> "$GITHUB_STEP_SUMMARY"
+            [ "$CODE" = "200" ] || { echo "::error::$u 冒烟失败"; exit 1; }
+          done
