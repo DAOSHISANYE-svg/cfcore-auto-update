@@ -17,28 +17,21 @@ jobs:
     name: 更新 cfapex
     runs-on: ubuntu-latest
     steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
       - name: 下载上游内核并比对
         id: check
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          mkdir -p dist upstream
+          mkdir -p upstream dist
           curl -sSL --retry 5 -H "Accept: application/vnd.github.raw" \
             -o upstream/cfapex.zip \
             "https://api.github.com/repos/shitouxiaoge-commits/CFAPEX/contents/CFAPEX-Pages-1.4.zip" || true
-          # 解包取 _worker.js（上游升级版本后 zip 文件名可能变化，失败时按 tag 重试 latest）
-          cd upstream && python3 -c "
-import zipfile, glob, os, sys
-z = [f for f in glob.glob('*.zip') if os.path.getsize(f) > 10000]
-sys.exit(0 if z else 1)
-" || { echo "::error::上游 zip 下载异常"; exit 1; }
-          python3 -c "
-import zipfile, glob
-z = zipfile.ZipFile(glob.glob('*.zip')[0])
-names = [n for n in z.namelist() if n.endswith('_worker.js')]
-z.extract(names[0] if names else z.namelist()[0], '.')
-"
+          python3 scripts/extract-cfapex.py
+          test -s upstream/_worker.js || { echo "::error::提取失败"; exit 1; }
+          SIZE=$(wc -c < upstream/_worker.js)
+          echo "- 内核大小: ${SIZE} 字节" >> "$GITHUB_STEP_SUMMARY"
+          [ "$SIZE" -gt 100000 ] || { echo "::error::文件仅 ${SIZE} 字节，异常"; exit 1; }
           NEW=$(sha256sum upstream/_worker.js | cut -d' ' -f1)
           OLD=$(cat deployed-hash.txt 2>/dev/null | tr -d '\n\r' || echo none)
           echo "new=$NEW" >> "$GITHUB_OUTPUT"
@@ -52,8 +45,11 @@ z.extract(names[0] if names else z.namelist()[0], '.')
 
       - name: 部署
         if: steps.check.outputs.needed == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          mkdir -p dist && cp upstream/_worker.js dist/_worker.js
+          cp upstream/_worker.js dist/_worker.js
           npm install -g wrangler@4 --silent
           # 项目级 env (A) 与 KV 绑定 (K) 在 Cloudflare 侧配置，自动继承
           wrangler pages deploy dist --project-name=cfapex --branch=main --commit-dirty=true
