@@ -18,7 +18,7 @@ function vlessHeader(uuid, port, host) {
     Buffer.from(host),
   ]);
 }
-const ws = new WebSocket(`wss://${host}${path}`);
+const ws = new WebSocket(`wss://${host}${path}`, { headers: { 'User-Agent': 'v2rayN/6.0' } });
 ws.binaryType = 'arraybuffer';
 let buf = Buffer.alloc(0), done = false;
 const t = setTimeout(() => {
