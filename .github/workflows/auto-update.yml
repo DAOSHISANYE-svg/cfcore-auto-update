@@ -161,6 +161,20 @@ jobs:
             exit 1
           fi
 
+      - name: 优选生效校验（部署后）
+        if: steps.check.outputs.needed == 'true'
+        env:
+          LINE_BC_UUID: ${{ secrets.LINE_BC_UUID }}
+        run: |
+          sleep 10
+          YX=$(curl -sS --max-time 25 "https://cfcore-6ha.pages.dev/$LINE_BC_UUID/api/config" | python3 -c "import json,sys;print(json.load(sys.stdin).get('yxURL',''))" 2>/dev/null || echo "")
+          if [ -n "$YX" ]; then
+            echo "- ✅ 优选源生效: $YX" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- ⚠️ 部署后 yxURL 未生效（内核可能变更配置读取方式），请检查节点速度" >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::优选源校验未通过"
+          fi
+
       - name: 记录已部署 hash
         if: steps.check.outputs.needed == 'true'
         run: |
