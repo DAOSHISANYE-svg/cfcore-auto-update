@@ -33,25 +33,14 @@ jobs:
           SIZE=$(wc -c < /tmp/content.txt)
           echo "内容大小: $SIZE 字节"
           grep -nE -C1 "$PAT" /tmp/content.txt > /tmp/matches.txt 2>/dev/null || echo "(无匹配)" > /tmp/matches.txt
-          mkdir -p result
-          cp /tmp/content.txt result/content.txt
-          cp /tmp/matches.txt result/matches.txt
 
       - name: 提交结果
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          mkdir -p result
+          cp /tmp/content.txt result/content.txt
+          cp /tmp/matches.txt result/matches.txt
           git add result/
           git commit -m "analysis result $(date -u +%Y%m%d%H%M)" || echo "(无变化)"
-          git push
-
-      - name: 重注册 wzdata-check（借道 git push）
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          printf '
-# re-registration touch %s
-' "$(date -u +%s)" >> .github/workflows/wzdata-check.yml
-          git add .github/workflows/wzdata-check.yml
-          git commit -m "chore: re-register wzdata-check" || echo "(无变化)"
           git push
