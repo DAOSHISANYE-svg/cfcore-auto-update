@@ -1,0 +1,49 @@
+name: Watchdog
+
+# 自愈调度器：每小时检查各每日工作流的最后运行时间，
+# 超过 26 小时未运行（GitHub 调度丢弃/延迟）则自动 dispatch 补跑
+
+on:
+  schedule:
+    - cron: "41 * * * *"
+  workflow_dispatch:
+    inputs: {}
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  check:
+    name: 调度自愈检查
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检查并补跑超时工作流
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          REPO="${{ github.repository }}"
+          check_and_dispatch() {
+            local WF="$1" MAX_HOURS="$2"
+            local LAST
+            LAST=$(gh api "repos/$REPO/actions/workflows/$WF/runs?per_page=1" --jq '.workflow_runs[0].created_at' 2>/dev/null || echo "")
+            if [ -z "$LAST" ]; then
+              echo "- ⚠️ $WF: 从未运行 → dispatch"; gh workflow run "$WF" --repo "$REPO" 2>/dev/null || true; return
+            fi
+            local LAST_TS NOW AGE_H
+            LAST_TS=$(date -d "$LAST" +%s 2>/dev/null || echo 0)
+            NOW=$(date +%s)
+            AGE_H=$(( (NOW - LAST_TS) / 3600 ))
+            if [ "$AGE_H" -ge "$MAX_HOURS" ]; then
+              echo "- 🔴 $WF: 最后运行 ${AGE_H}h 前（超过 $MAX_HOURS）→ dispatch 补跑"
+              gh workflow run "$WF" --repo "$REPO" 2>/dev/null || true
+            else
+              echo "- ✅ $WF: ${AGE_H}h 前运行正常"
+            fi
+          }
+          check_and_dispatch "auto-update.yml" 26
+          check_and_dispatch "cfpilot-update.yml" 26
+          check_and_dispatch "cfapex-sync.yml" 26
+          check_and_dispatch "wzdata-update.yml" 26
+          check_and_dispatch "monitor.yml" 8
+          echo "### Watchdog 检查完成" >> "$GITHUB_STEP_SUMMARY"
